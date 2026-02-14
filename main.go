@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -10,6 +11,9 @@ import (
 
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 type apiConfig struct {
@@ -19,6 +23,7 @@ type apiConfig struct {
 	filepathRoot     string
 	assetsRoot       string
 	s3Bucket         string
+	s3Client         *s3.Client
 	s3Region         string
 	s3CfDistribution string
 	port             string
@@ -101,6 +106,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("Couldn't create assets directory: %v", err)
 	}
+
+	awsCfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(s3Region))
+	if err != nil {
+		log.Fatalf("Couldn't load aws config: %v", err)
+	}
+
+	cfg.s3Client = s3.NewFromConfig(awsCfg)
 
 	mux := http.NewServeMux()
 	appHandler := http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot)))
