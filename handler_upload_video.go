@@ -80,25 +80,45 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	videoNewFile, err := os.CreateTemp("", "tubely-upload-*.mp4")
+	rawVideoFile, err := os.CreateTemp("", "tubely-upload-*.mp4") // create the raw video from upload
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Could not create file", err)
 		return
 	}
-	defer os.Remove(videoNewFile.Name())
-	defer videoNewFile.Close()
+	defer rawVideoFile.Close()
+	defer os.Remove(rawVideoFile.Name())
 
-	_, err = io.Copy(videoNewFile, video)
+	_, err = io.Copy(rawVideoFile, video)
 	if err != nil {
 		respondWithError(w, http.StatusInsufficientStorage, "Could not write new file", err)
 		return
 	}
 
-	_, err = videoNewFile.Seek(0, io.SeekStart)
+	err = rawVideoFile.Close() // need manual close here before ffmpeg can deal with it
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Could not reset new file pointer", err)
+		respondWithError(w, http.StatusInternalServerError, "Failed to process video", err)
 		return
 	}
+
+	videoNewFilePath, err := processVideoForFastStart(rawVideoFile.Name()) // process the video
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to process video", err)
+		return
+	}
+
+	videoNewFile, err := os.Open(videoNewFilePath) // open the processed video and continue
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to process video", err)
+		return
+	}
+	defer os.Remove(videoNewFile.Name())
+	defer videoNewFile.Close()
+
+	//_, err = videoNewFile.Seek(0, io.SeekStart)
+	//if err != nil {
+	//	respondWithError(w, http.StatusInternalServerError, "Could not reset new file pointer", err)
+	//	return
+	//}
 
 	videoMediaExts, err := mime.ExtensionsByType(videoMediaType)
 	if err != nil || len(videoMediaExts) == 0 {
@@ -108,7 +128,10 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	videoMediaExt := videoMediaExts[0]
 
 	urlRandBytes := make([]byte, 32)
-	rand.Read(urlRandBytes)
+	_, err = rand.Read(urlRandBytes)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to generate URL for video", err)
+	}
 	urlString := hex.EncodeToString(urlRandBytes)
 
 	aspectRatio, err := getVideoAspectRatio(videoNewFile.Name())
@@ -147,6 +170,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	err = cfg.db.UpdateVideo(videoMetadata)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to update video", err)
+		return
 	}
 
 	respondWithJSON(w, http.StatusOK, videoMetadata)
@@ -267,4 +291,26 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		return "9:16", nil
 	}
 	return "other", nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	outputFilePath := filePath + ".processing"
+	command := exec.Command(
+		"ffmpeg",
+		"-i",
+		filePath,
+		"-c",
+		"copy",
+		"-movflags",
+		"faststart",
+		"-f",
+		"mp4",
+		outputFilePath,
+	)
+	err := command.Run()
+	if err != nil {
+		return "", err
+	}
+
+	return outputFilePath, nil
 }
