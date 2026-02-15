@@ -131,6 +131,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	_, err = rand.Read(urlRandBytes)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to generate URL for video", err)
+		return
 	}
 	urlString := hex.EncodeToString(urlRandBytes)
 
